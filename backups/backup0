@@ -1,0 +1,1326 @@
+<!DOCTYPE html>
+<html>
+  <head lang="en">
+  <title>TRADE MANAGER FIX 4.4 Order Match</title>
+	<meta charset="utf-8">
+	<script src="codebase/dhtmlx.js" type="text/javascript"></script>
+  <script src="data/myWSCode.js" type="text/javascript"></script>
+  <script src="data/jsonObj.js" type="text/javascript"></script>
+  <link rel="STYLESHEET" type="text/css" href="codebase/dhtmlx.css">
+  <style>
+		html, body {
+      overflow: hidden;
+			width: 100%;
+			height: 100%;
+			margin: 0px;
+			padding: 0px;
+		}
+		#combo {
+			margin: -2px;
+		}
+    #loading-image {
+      position: fixed;
+      display: none;
+      margin: auto;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 340px;
+      height: 340px;
+      z-index: 1;
+
+    }
+    #loading-text {
+      text-align: center;
+      position:absolute;
+      color:white;
+      text-shadow: -1.5px 0 black, 0 1.5px black, 1.5px 0 black, 0 -1.5px black;
+      left: 0;
+      right: 0;
+      bottom: 43%;
+      transform: translateY(-57%);
+      font-size: 0px;
+      z-index: 2;
+    }
+    #omstext {
+      position: absolute;
+      margin: auto;
+      width: 50%;
+      font-weight: bold;
+      text-align: center;
+      white-space: nowrap;
+      font-size: 26px;
+      font-size: 1.54vw;
+    }
+    #usertext {
+      font-weight: bold;
+      font-size: 14px;
+    }
+  </style>
+  <script>
+    var timeout = 1200;
+    // Webservice variables
+  	var domains, token, userName;
+    var pause = true;
+    // Webservice Listnames
+    var analyses, portfolios, scenarios;
+  	// DHTMLX variables
+  	var layout, layout2, toolbar, portCombo, win, loginWin, loginForm, tab, portGrid, ordersGrid, execGrid, epxGrid, form1, form2, validCombo;
+  	// Loading screen
+    var loading = function(status) {
+      if (status) {
+        document.getElementById("loading-image").style.display="block";
+        document.getElementById("loading-text").style.fontSize="36px";
+      } else {
+        document.getElementById("loading-image").style.display="none";
+        document.getElementById("loading-text").style.fontSize="0px";
+      }
+    }
+    function sort_custom(a,b,order){
+        var a=a.slice(7);
+        var b=b.slice(7);
+        var n=parseInt(a);
+        var m=parseInt(b);
+        if(order=="asc")
+            return n>m?1:-1;
+        else
+            return n<m?1:-1;
+    };
+    setInterval(refresh, 4000);
+    function refresh() {
+      if (!pause) {
+        setTimeout(function(){
+          if (!pause) {
+            document.getElementById("loading-text").innerHTML = "Refreshing data"
+            omsCheckOrders();
+          }
+        }, timeout+100)
+      }
+    }
+    // Main code
+		dhtmlxEvent(window,"load",function() {
+			// Layout: Main
+			layout = new dhtmlXLayoutObject(document.body, "2E");
+			layout.cells("a").setText("PMS Trade Portfolio");
+			layout.cells("b").setText("");
+			layout.cells("a").setHeight(280);
+			// Layout: Sub
+			layout2 = new dhtmlXLayoutObject(layout.cells("b"), "3L");
+			layout2.cells("a").setText("");
+			layout2.cells("b").setText("Order");
+			layout2.cells("c").setText("Order Update");
+			layout2.cells("b").setWidth(350);
+			layout2.cells("c").setHeight(200);
+      // Layout: Resize
+      if (window.attachEvent)
+        window.attachEvent("onresize",resizeLayout);
+      else
+        window.addEventListener("resize",resizeLayout,false);
+      var t;
+      function resizeLayout(){
+        window.clearTimeout(t);
+        t = window.setTimeout(function(){
+          layout.cells("a").setHeight(280);
+          layout2.cells("b").setWidth(350);
+    			layout2.cells("c").setHeight(160);
+        },200);
+        omstextSize();
+      }
+			// Get domains
+			getAvailableDomains()
+			// Window
+			win = new dhtmlXWindows()
+			// Window: Login
+			loginWin = win.createWindow("login", 20, 30, 250, 180);
+      loginWin.button("minmax").disable();
+      loginWin.button("close").disable();
+      loginWin.button("park").disable();
+      loginWin.setText("Login");
+      loginWin.setModal(true);
+			loginWin.center();
+			// Window: Login: Form
+			loginForm = loginWin.attachForm();
+      loginForm.loadStruct(loginFormData);
+			loginForm.attachEvent("onButtonClick", function(){
+				document.getElementById("loading-text").innerHTML = "Logging in"
+        loginForm.disableItem("login");
+				loading(true);
+				login();
+			});
+			// Toolbar
+			toolbar = layout.attachToolbar();
+			toolbar.addText('cb', 0, '<div id="combo">');
+      toolbar.addInput('date', 1, '', 100);
+			// Toolbar: Combobox
+			portCombo = new dhtmlXCombo("combo", "alfa", 200);
+			portCombo.readonly(true);
+      // Toolbar: Calendar
+      var inputS = toolbar.objPull[toolbar.idPrefix+"date"].obj.firstChild;
+      inputS.readOnly = true;
+      var portDate = new dhtmlxCalendarObject(inputS);
+      toolbar.setValue("date", today(), false);
+      portDate.hideTime();
+			// Toolbar: Controls
+			toolbar.addButton("load", 2, "Load");
+      toolbar.addButton("cancel", 3, "Cancel");
+      toolbar.addButton("test", 4, "Test");
+      toolbar.addButton("cfg", 5, "Config");
+      toolbar.addText('omstext', 7, '<div id="omstext">TRADE MANAGER FIX 4.4 Order Match</div>');
+      omstextSize();
+      toolbar.addSpacer("omstext");
+      toolbar.addText('usertext', 8, '<div id="usertext">Not logged in</div>');
+      toolbar.addButton("logout", 9, 'Logout');
+      toolbar.disableItem("logout");
+      toolbar.disableItem("cancel");
+      toolbar.disableItem("load");
+      toolbar.disableItem("cfg");
+      toolbar.hideItem("cancel");
+      toolbar.hideItem("test");
+			// Toolbar: Button: Event
+			toolbar.attachEvent("onClick", function(name){
+				if (name == "logout") {
+          pause = true;
+          document.getElementById("loading-text").innerHTML = "Logging out";
+					loading(true);
+          toolbar.disableItem("logout");
+          setTimeout(logout(), timeout);
+				}
+				if (name == "load") {
+          pause = true;
+          toolbar.disableItem("logout");
+          toolbar.disableItem("load");
+          form1.lock();
+          form2.lock();
+          toolbar.hideItem("load");
+          toolbar.enableItem("cancel");
+          toolbar.showItem("cancel");
+          loading(true);
+					setTimeout(runAnalysis(), timeout);
+				}
+        if (name == "cancel") {
+          pause = true;
+          document.getElementById("loading-text").innerHTML = "Cancelling";
+          setTimeout(cancelCurrentAction(), timeout);
+          toolbar.disableItem("cancel");
+        }
+        if (name == "test") {
+          pause = true;
+          setTimeout(importOE(), timeout);
+        }
+			})
+			// Tab
+			tab = layout2.cells("a").attachTabbar();
+			tab.addTab("a1", "Orders", "100px");
+			tab.addTab("a2", "Execution", "100px");
+      tab.addTab("a3", "Expired Orders", "100px");
+			tab.tabs("a1").setActive();
+			// Grid: Portfolio
+			portGrid = layout.cells("a").attachGrid();
+			portGrid.setHeader("Position,ISIN,Serial Number,Active Status,Instrument Type,Instrument Class,Name,Price in,Currency,\
+      Last Market Price Buy,Last Market Price Sell,Market Price Timestamp,Market,Volume,Face Value,Issuer ID,Issuer Name,\
+      Theoretical Price");
+      portGrid.setColumnIds("p_posid,isin");
+      portGrid.setColTypes("ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro");
+      portGrid.setColSorting("int,str,str,str,str,str,str,str,str,int,int,date,str,int,int,int,str,int");
+      portGrid.enableColumnAutoSize(true);
+      portGrid.attachEvent("onRowSelect", function(){
+        ordersGrid.clearSelection();
+        form1.unlock();
+        typeVal();
+        form2.lock();
+        form1.setItemValue("isin", portGrid.cells(portGrid.getSelectedRowId(),1).getValue());
+        if (!pause && form1.getItemValue("isin")) {
+          form1.enableItem("submit");
+        } else {
+          form1.disableItem("submit");
+        }
+      });
+			portGrid.init();
+			// Grid: Orders
+			ordersGrid = tab.cells("a1").attachGrid();
+			ordersGrid.setHeader("Order ID,Symbol,Quantity,Open,Executed,Side,Type,Limit,Stop,Average,TradeTime,ValidTill");
+      ordersGrid.attachHeader("#text_filter,#text_filter,#numeric_filter,#numeric_filter,#numeric_filter,#select_filter,#select_filter,#numeric_filter,#numeric_filter,#numeric_filter,#text_filter,<div id='valid'></div>");
+      ordersGrid.setColumnIds("o_orderid,o_symbol,o_quantity,o_open,o_exec,o_side,o_type,o_limit,o_stop,o_avg,o_tradetime,o_validtill");
+      ordersGrid.setColTypes("ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro");
+      ordersGrid.setColSorting(",str,int,int,int,str,str,int,int,int,date,date");
+      ordersGrid.setCustomSorting(sort_custom,0);
+      ordersGrid.enableColumnAutoSize(true);
+      ordersGrid.attachEvent("onRowSelect", function(){
+        form1.lock();
+        form2.unlock();
+        portGrid.clearSelection();
+        if (!pause) {
+          form2.enableItem("cancel");
+          form2.enableItem("replace");
+        }
+      });
+			ordersGrid.init();
+			// Grid: Executed
+			execGrid = tab.cells("a2").attachGrid();
+			execGrid.setHeader("Execution ID,Order ID,Symbol,Quantity,Side,Price,Execution Time");
+			execGrid.setColSorting("int,,str,int,str,int,date");
+      execGrid.setColTypes("ro,ro,ro,ro,ro,ro,ro");
+      execGrid.setCustomSorting(sort_custom,1);
+      execGrid.enableColumnAutoSize(true);
+			execGrid.init();
+      // Grid: Expired Orders
+      expGrid = tab.cells("a3").attachGrid();
+      expGrid.setHeader("Order ID,Symbol,Quantity,Open,Executed,Side,Type,Limit,Stop,Average,TradeTime,ValidTill");
+      expGrid.setColTypes("ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro");
+      expGrid.setColSorting(",str,int,int,int,str,str,int,int,int,date,date");
+      expGrid.setCustomSorting(sort_custom,0);
+      expGrid.enableColumnAutoSize(true);
+      expGrid.init();
+      // Tab: Events
+      tab.attachEvent("onTabClick", function(id){
+        if (id == "a1") {
+          execGrid.clearSelection();
+          expGrid.clearSelection();
+          form2.lock();
+        }
+        if (id == "a2") {
+          ordersGrid.clearSelection();
+          expGrid.clearSelection();
+          form2.lock();
+        }
+        if (id == "a3") {
+          execGrid.clearSelection();
+          ordersGrid.clearSelection();
+          form2.lock();
+        }
+      });
+			// Form 1
+			form1 = layout2.cells("b").attachForm();
+			form1.loadStruct(form1Data);
+      form1.bind(portGrid);
+      form1.getCalendar("date").setDateFormat("%Y/%m/%d %H:%i:%s");
+      form1.getCalendar("date").showTime();
+      form1.getCalendar("date").showToday();
+			form1.attachEvent("onChange", typeVal);
+      form1.attachEvent("onInputChange", function(){
+        if (form1.getItemValue("isin")) {
+          form1.enableItem("submit");
+        } else {
+          form1.disableItem("submit");
+        }
+      })
+      form1.attachEvent("onButtonClick", function(){
+        if (form1.getItemValue("quantity") == "" || form1.getItemValue("quantity") <= 0) {
+          alert("Quantity cannot be 0 or less");
+          return;
+        }
+        if (form1.getItemValue("isin") == "") {
+          alert("Symbol cannot be blank");
+          return;
+        }
+        pause = true;
+        document.getElementById("loading-text").innerHTML = "Creating New Order"
+        loading(true);
+        setTimeout(omsNewOrder(), timeout);
+      });
+			// Form 2
+			form2 = layout2.cells("c").attachForm();
+      form2.loadStruct(form2Data);
+      form2.lock();
+      form2.bind(ordersGrid);
+      // Form 2: Event
+      form2.attachEvent("onButtonClick", function(name){
+        if (name == "cancel") {
+          pause = true;
+          loading(true);
+          document.getElementById("loading-text").innerHTML = "Cancelling order";
+          setTimeout(omsCancelOrder(), timeout);
+        }
+        if (name == "replace") {
+          pause = true;
+          loading(true);
+          document.getElementById("loading-text").innerHTML = "Replacing order";
+          setTimeout(omsReplaceOrder(), timeout);
+        }
+      })
+      /*validCombo = new dhtmlXCombo("valid", "alfa", 90);
+      validCombo.readonly(true);
+      validCombo.addOption([
+        ["",""],
+        ["Active","Active"],
+        ["Expired","Expired"]
+      ])
+      validCombo.attachEvent("onChange", validSort);*/
+		})
+	</script>
+  <body>
+    <h1 id="loading-text">Loading</h1>
+    <img id="loading-image" src="img/loading.gif" alt="Loading..." />
+  </body>
+</html>
+
+
+function soapCall(handler, soapFunction, soapBody) {
+	try {
+		var xmlhttp = new XMLHttpRequest();
+		var endpoint = "http://www.eurorisksystems.com:8080/PMSWS/PMSWS11?wsdl"
+		xmlhttp.open("POST", endpoint, true);
+		xmlhttp.responseType = "Document";
+		xmlhttp.onreadystatechange = function () {
+			if (this.readyState == 4) {
+				var xml = xmlhttp.responseXML;
+				if (this.status != 200) {
+					 alert("Parse error: " + xml.parseError.reason);
+				} else{
+					if (xml.getElementsByTagName("responseCode").length > 0){
+						var responseCode = xml.getElementsByTagName("responseCode")[0].textContent;
+						if (responseCode == "OK") {
+							handler(xml);
+						} else if (responseCode == 'INVALID_TOKEN' || responseCode == 'EXECUTION_NODE_IS_NOT_AVAILABLE'|| responseCode == 'EXPIRED_TOKEN'){
+							token = "";
+							alert("Expired session!");
+							pause = true;
+							loading(false);
+						} else {
+							alert("Bussiness exception: " + responseCode);
+							//toolbar.hideItem("cancel");
+							//toolbar.enableItem("cancel");
+							//toolbar.showItem("load");
+							toolbar.enableItem("logout")
+							pause = true;
+							loading(false);
+						}
+					} else {
+						alert("Proxy Exception: responseCode not found");
+						pause = true;
+						loading(false);
+					}
+				}
+			}
+		}
+		xmlhttp.setRequestHeader("Content-Type", "text/xml");
+		xmlhttp.setRequestHeader("SOAPAction", endpoint + "/" + soapFunction);
+		var header = "<soapenv:Header/>";
+		var body = "<soapenv:Body>" + soapBody + "</soapenv:Body></soapenv:Envelope>";
+		xmlhttp.send("<?xml version='1.0' encoding='UTF-8'?><soapenv:Envelope xmlns:soapenv='http://schemas.xmlsoap.org/soap/envelope/' xmlns:ers='http://ers.bg'>" + header + body);
+	} catch (e) {
+		console.log("EVERYTHING IS BROKEN");
+		console.log(e.message)
+		loading(false);
+		pause = false;
+		return;
+	}
+}
+
+function getAvailableDomains() {
+	soapCall(
+		function(xml) {
+			try {
+				domains = xml.getElementsByTagName("domains");
+				for (var i=0; i < domains.length; i++) {
+					loginForm.getCombo("domain").addOption([
+						[domains[i].textContent,domains[i].textContent]
+					]);
+				}
+				loginForm.getCombo("domain").selectOption(1);
+		    } catch (e) {
+				alert("An error has occured.\nPlease refresh your page.")
+			}
+		},
+		"getAvailableDomains",
+		"<ers:getAvailableDomains/>",
+	);
+}
+
+function login() {
+	soapCall(
+		function(xml) {
+			try {
+				token = xml.getElementsByTagName("token")[0].textContent;
+				userName = loginForm.getItemValue("user");
+				document.getElementById("usertext").innerHTML = "User: " + userName;
+				loginWin.hide();
+				getPortfolios();
+				loginForm.enableItem("login");
+			} catch (e) {
+				loading(false);
+				alert("Incorrect username or password.")
+				loginForm.enableItem("login");
+			}
+		},
+		"login",
+		"<ers:login>" +
+			"<userName>" + loginForm.getItemValue("user") + "</userName>" +
+			"<password>" + loginForm.getItemValue("pass") + "</password>" +
+			"<domain>" + loginForm.getItemValue("domain") + "</domain>" +
+		"</ers:login>"
+	);
+}
+
+function logout() {
+	if (actionMode == true) {
+		soapCall(
+			function(xml) {
+				actionMode = false;
+				logoutA();
+			},
+			"endActionMode",
+			"<ers:endActionMode><token>" + token + "</token></ers:endActionMode>",
+		)
+	} else {
+		logoutA();
+	}
+	function logoutA() {
+		soapCall(
+			function(xml) {
+				loginWin.show();
+				loginWin.setModal(true);
+				document.getElementById("usertext").innerHTML = "Not logged in"
+				loginForm.setItemValue("user", "");
+				loginForm.setItemValue("pass", "");
+				portGrid.clearAll();
+				ordersGrid.clearAll();
+				execGrid.clearAll();
+				expGrid.clearAll();
+				form1.clear();
+				form2.clear();
+				portCombo.unSelectOption();
+				toolbar.disableItem("load");
+				//toolbar.disableItem("cfg");
+				//toolbar.disableItem("cancel");
+				toolbar.disableItem("logout");
+				loading(false);
+				token = "";
+			},
+			"shutDown",
+			"<ers:shutDown><token>" + token + "</token></ers:shutDown>",
+		)
+	}
+}
+
+function getPortfolios() {
+	soapCall(
+		function(xml) {
+			analyses = xml.getElementsByTagName("nomValues")[0].textContent;
+			analyses += ";Export";
+		},
+		"getListItemsWithNom",
+		"<ers:getListItemsWithNom><token>" + token + "</token><listName>AnalysisList</listName></ers:getListItemsWithNom>",
+	);
+	soapCall(
+		function(xml) {
+			var portTemp = xml.getElementsByTagName("nomValues")[0].textContent;
+			portfolios = portTemp.split(";");
+			for (var i = 2; i < portfolios.length; i++) {
+				portfolio = portfolios[i];
+				portCombo.addOption([
+					[portfolio,portfolio]
+				]);
+			}
+			portCombo.selectOption(0);
+			importOE();
+		},
+		"getListItemsWithNom",
+		"<ers:getListItemsWithNom><token>" + token + "</token><listName>Portfolios</listName></ers:getListItemsWithNom>",
+	);
+	soapCall(
+		function(xml) {
+			scenarios = xml.getElementsByTagName("nomValues")[0].textContent;
+		},
+		"getListItemsWithNom",
+		"<ers:getListItemsWithNom><token>" + token + "</token><listName>Scenarios</listName></ers:getListItemsWithNom>",
+	);
+}
+
+function runAnalysis() {
+	if (actionMode == true) {
+		soapCall(
+			function(xml) {
+				actionMode = false;
+				runAnalysisA();
+			},
+			"endActionMode",
+			"<ers:endActionMode><token>" + token + "</token></ers:endActionMode>",
+		)
+	} else {
+		runAnalysisA()
+	}
+	function runAnalysisA() {
+	 	document.getElementById("loading-text").innerHTML = "Loading Portfolio: " + portCombo.getComboText();
+		form1.clear();
+		try {
+		 	soapCall(
+				function(xml) {
+					actionMode = true;
+					try {
+						soapCall(
+							function(xml) {
+								checkRunAnalysisStatus();
+							},
+						"startActionAsync",
+						"<ers:startActionAsync>" +
+							"<token>" + token + "</token>" +
+							"<scenarioID>Standard</scenarioID>" +
+							"<outputType>" + portCombo.getActualValue()	+ "</outputType>" +
+							"<analysisDate>" + dateISO() + "</analysisDate>" +
+							"<analyses><name>Portfolio Load</name></analyses>" +
+			        "<analyses><name>Export</name></analyses>" +
+						"</ers:startActionAsync>",
+			   		);
+					} catch (e) {
+						endActionMode();
+						caught();
+					}
+				},
+				"beginActionMode",
+		 		"<ers:beginActionMode>" +
+					"<token>" + token + "</token>" +
+			    "<positionSelectorType>" + "Portfolio" + "</positionSelectorType>" +
+		    	"<selectorID>" + portCombo.getActualValue() + "</selectorID>" +
+				"</ers:beginActionMode>",
+			);
+		} catch(e) {
+			caught();
+		}
+	}
+}
+
+function checkRunAnalysisStatus() {
+	soapCall(
+		function(xml) {
+			var statusCode = "NOK";
+			try {
+  			statusCode = xml.getElementsByTagName("return")[0].getElementsByTagName("statusCode")[0].textContent;
+				if (statusCode == "IDLE") {
+					return;
+				} if (statusCode == "ANOTHER_ACTION_IN_PROCESS") {
+					alert("Another action is in process.");
+				} if (statusCode == "IDLE_IN_ACTION_MODE") {
+					document.getElementById("loading-text").innerHTML = "Requesting data"
+					getFieldValues();
+				} else {
+					checkRunAnalysisStatus();
+				}
+			} catch(e) {
+				endActionMode();
+				caught();
+			}
+		},
+  	"getCurrentStatus",
+  	"<ers:getCurrentStatus><token>" + token + "</token></ers:getCurrentStatus>",
+ 	);
+}
+
+function getFieldValues() {
+		soapCall(
+			function(xml) {
+				try {
+					document.getElementById("loading-text").innerHTML = "Importing data"
+					portGrid.clearAll();
+					var rows = xml.getElementsByTagName("return")[0].getElementsByTagName("rows");
+					var buffer = "";
+					for (var row = 0; row < rows.length; row++) {
+						var cols = rows[row].getElementsByTagName("cols");
+						for (var col = 0; col < cols.length; col++) {
+							var colItem = cols[parseInt(col)].textContent;
+							buffer = buffer + cols[col].textContent + ",";
+						}
+						buffer += "\n";
+					}
+					var data = buffer.split("\n");
+					var dataArray = [];
+					for (i = 0; i < data.length-1; i++) {
+						dataArray[i] = data[i].split(",")
+						dataArray[i][7] = round(dataArray[i][7],2)
+						dataArray[i][8] = round(dataArray[i][8],2)
+						dataArray[i][11] = round(dataArray[i][11],2)
+						dataArray[i][14] = round(dataArray[i][14],2)
+					}
+					pause = false;
+					document.getElementById("loading-text").innerHTML = "Loaded";
+					portGrid.parse(dataArray,"jsarray");
+					loading(false);
+					toolbar.enableItem("logout");
+					toolbar.enableItem("load");
+					//toolbar.enableItem("cfg");
+					if (ordersGrid.getSelectedRowId()) {
+						form2.unlock();
+					} else {
+						form1.unlock();
+					}
+					//toolbar.hideItem("cancel")
+					//toolbar.showItem("load")
+				} catch (e) {
+					endActionMode();
+					caught();
+				}
+			},
+			"getFieldValue",
+	  	"<ers:getFieldValue>" +
+	  		"<token>" + token + "</token>" +
+	  		"<fields>Pos ID</fields>" +
+				"<fields>ISIN</fields>" +
+	  		"<fields>Serial Number</fields>" +
+				"<fields>SC Trade</fields>" +
+				"<fields>Instr Type</fields>" +
+	  		"<fields>Subportfolio/Instrument Name</fields>" +
+	  		"<fields>Curr</fields>" +
+	  		"<fields>Market Price</fields>" +
+				"<fields>Market Price</fields>" +
+				"<fields>Market Price Date</fields>" +
+				"<fields>Market</fields>" +
+	  		"<fields>Volume</fields>" +
+				"<fields>Issuer ID</fields>" +
+				"<fields>Issuer Name</fields>" +
+				"<fields>Theor Price</fields>" +
+				"<fields>Depot ID</fields>" +
+	  	"</ers:getFieldValue>",
+	 	);
+}
+
+/*function cancelCurrentAction() {
+	soapCall(
+		function(xml) {
+			document.getElementById("loading-text").innerHTML = "Cancelling";
+			endActionMode();
+		},
+		"cancelCurrentAction",
+		"<ers:cancelCurrentAction><token>" + token + "</token></ers:cancelCurrentAction>",
+	);
+}*/
+
+function endActionMode() {
+	soapCall(
+		function(xml) {
+			actionMode = false;
+			pause = false;
+			loading(false);
+			//toolbar.hideItem("cancel");
+			//toolbar.showItem("load");
+			toolbar.enableItem("logout");
+			toolbar.enableItem("load");
+			//toolbar.enableItem("cfg");
+			if (ordersGrid.getSelectedRowId()) {
+				form2.unlock();
+			} else {
+				form1.unlock();
+			}
+		},
+		"endActionMode",
+		"<ers:endActionMode><token>" + token + "</token></ers:endActionMode>",
+	)
+}
+
+var tables 	= ['OMSOrders','OMSExecutions'];
+var buffers	= ['OrdersBuffer','ExecutionsBuffer'];
+var varIncr = 0;
+var varLimiter = 0;
+var bufferOE = '';
+
+function importOE() {
+	var idxImport = 0;
+	document.getElementById("loading-text").innerHTML = "Importing " + tables[idxImport];
+	varLimiter = 2;
+	varIncr = idxImport
+	importNextTable(idxImport);
+}
+
+function importNextTable(idxImport) {
+		var table = tables[idxImport];
+		soapCall(
+			function(xml) {
+				checkImportStatusOE();
+			},
+			"startResultsBuildAsync",
+			"<ers:startResultsBuildAsync>" +
+				"<token>" + token + "</token>" +
+				"<tableName>" + table + "</tableName>" +
+				"<selectParams>" +
+					"<name>ORD_OWNER</name>" +
+					"<value>" + userName + "</value>" +
+				"</selectParams>" +
+			"</ers:startResultsBuildAsync>",
+		);
+}
+
+function checkImportStatusOE(){
+	soapCall(
+		function(xml) {
+			var statusCode = 'NOK';
+			statusCode = xml.getElementsByTagName("return")[0].getElementsByTagName("statusCode")[0].textContent;
+			if (statusCode == "IDLE") {
+				importTableOE();
+			} else {
+				checkImportStatusOE();
+				document.getElementById("loading-text").innerHTML += ".";
+			}
+		},
+		'getCurrentStatus',
+		'<ers:getCurrentStatus><token>' + token + '</token></ers:getCurrentStatus>',
+	);
+}
+
+function getBuffer(idx) {
+	if (idx == 0) {
+		return 'OrdersBuffer';
+	} else if	(idx == 1) {
+		return 'ExecutionsBuffer';
+	} else {
+		return '';
+	}
+}
+
+function importTableOE() {
+	soapCall(
+		function(xml) {
+			try {
+				var idxImport = varIncr;
+				var data = Base64.decode(xml.getElementsByTagName("return")[0].getElementsByTagName("data")[0].textContent).replace(/,/g, '.').replace(/;/g, ',');
+				var buffer = getBuffer(idxImport);
+				idxImport++;
+				varIncr = idxImport;
+				var maxIdxImport = varLimiter
+				var dataArray = [];
+				var dataArrayTemp = data.split(",");
+				var dataArrayTemp2 = [];
+				if (idxImport == maxIdxImport) {
+					toolbar.enableItem("load");
+					//toolbar.enableItem("cancel");
+					toolbar.enableItem("logout");
+					//toolbar.enableItem("cfg")
+					loading(false);
+					for (i = 0; i < dataArrayTemp.length; i++) {
+						if (i % 8 == 0 && i != 0) {
+							if (i % 7 != 0) {
+								dataArrayTemp2.push(dataArrayTemp[i-8], dataArrayTemp[i-7], dataArrayTemp[i-6], dataArrayTemp[i-5], dataArrayTemp[i-4],
+									dataArrayTemp[i-3], dataArrayTemp[i-2]);
+								dataArray.push(dataArrayTemp2);
+								dataArrayTemp2 = [];
+							}
+						}
+					}
+				execGrid.clearAll();
+				execGrid.parse(dataArray,"jsarray");
+				execGrid.sortRows(1,"sort_custom","asc");
+				pause = false;
+        loginWin.setModal(false);
+				} else {
+					for (i = 0; i < dataArrayTemp.length; i++) {
+						if (i % 14 == 0 && i != 0) {
+							if (dataArrayTemp[i-1] == "GTC") {
+								dataArrayTemp[i-3] = "Valid Till Cancel";
+							}
+							dataArrayTemp2.push(dataArrayTemp[i-14], dataArrayTemp[i-13], dataArrayTemp[i-12], dataArrayTemp[i-11], dataArrayTemp[i-10],
+								dataArrayTemp[i-9], dataArrayTemp[i-8], dataArrayTemp[i-7], dataArrayTemp[i-6], dataArrayTemp[i-5], dataArrayTemp[i-4],
+								dataArrayTemp[i-3]);
+							if (dataArrayTemp2[6] == "Limit" || dataArrayTemp2[6] == "Stop Limit") {
+							} else {
+								dataArrayTemp2[7] = "-";
+							}
+							if (dataArrayTemp2[6] == "Stop" || dataArrayTemp2[6] == "Stop Limit") {
+							} else {
+								dataArrayTemp2[8] = "-";
+							}
+							if (dataArrayTemp2[3] == 0) {
+								dataArrayTemp2[11] = "Expired";
+							}
+							dataArrayTemp2[0] = dataArrayTemp2[0].replace(/(\r\n|\n|\r)/gm,"");
+							dataArray.push(dataArrayTemp2);
+							dataArrayTemp2 = [];
+						}
+					}
+					ordersGrid.clearAll();
+					ordersGrid.parse(dataArray,"jsarray");
+					validMove();
+					ordersGrid.sortRows(0,"sort_custom","asc");
+					expGrid.sortRows(0,"sort_custom","asc");
+					document.getElementById("loading-text").innerHTML = "Importing " + tables[idxImport];
+					importNextTable(idxImport);
+				}
+			} catch(e){
+				caught();
+			}
+		},
+		'getCurrentResultsWithColDef',
+		'<ers:getCurrentResultsWithColDef><token>' + token + '</token></ers:getCurrentResultsWithColDef>',
+	);
+}
+
+function omsNewOrder() {
+	if (form1.getItemValue("tif") == "GTD") {
+		soapCall(
+			function(xml) {
+				document.getElementById("loading-text").innerHTML = "Creating new order";
+				omsCheckErrors();
+			},
+			"omsNewOrder",
+			"<ers:omsNewOrder>" +
+				"<token>" + token + "</token>" +
+				"<symbol>" + form1.getItemValue("isin") + "</symbol>" +
+				"<quantity>" + form1.getItemValue("quantity") + "</quantity>" +
+				"<side>" + form1.getItemValue("side") + "</side>" +
+				"<type>" + form1.getItemValue("type") + "</type>" +
+				"<limit>" + form1.getItemValue("limit") + "</limit>" +
+				"<stop>" + form1.getItemValue("stop") + "</stop>" +
+				"<tif>" + form1.getItemValue("tif") + "</tif>" +
+				"<expire>" + form1.getCalendar("date").getFormatedDate("%Y%m%d-%H:%i:%s") + "</expire>" +
+			"</ers:omsNewOrder>",
+		);
+	} else {
+		soapCall(
+			function(xml) {
+				document.getElementById("loading-text").innerHTML = "Creating new order";
+				omsCheckErrors();
+			},
+			"omsNewOrder",
+			"<ers:omsNewOrder>" +
+				"<token>" + token + "</token>" +
+				"<symbol>" + form1.getItemValue("isin") + "</symbol>" +
+				"<quantity>" + form1.getItemValue("quantity") + "</quantity>" +
+				"<side>" + form1.getItemValue("side") + "</side>" +
+				"<type>" + form1.getItemValue("type") + "</type>" +
+				"<limit>" + form1.getItemValue("limit") + "</limit>" +
+				"<stop>" + form1.getItemValue("stop") + "</stop>" +
+				"<tif>" + form1.getItemValue("tif") + "</tif>" +
+			"</ers:omsNewOrder>",
+		);
+	}
+}
+
+function omsCancelOrder() {
+	try {
+		soapCall(
+			function(xml) {
+				document.getElementById("loading-text").innerHTML = "Cancelling order";
+				omsCheckErrors();
+			},
+			"omsCancelOrder",
+			"<ers:omsCancelOrder>" +
+				"<token>" + token + "</token>" +
+				"<origID>" + ordersGrid.cells(ordersGrid.getSelectedRowId(),0).getValue() + "</origID>" +
+			"</ers:omsCancelOrder>"
+		)
+	} catch(e) {
+		caught();
+	}
+};
+
+function omsReplaceOrder() {
+	try {
+		soapCall(
+			function(xml) {
+				document.getElementById("loading-text").innerHTML = "Replacing order";
+				omsCheckErrors();
+			},
+			"omsReplaceOrder",
+			"<ers:omsReplaceOrder>" +
+				"<token>" + token + "</token>" +
+				"<origID>" + ordersGrid.cells(ordersGrid.getSelectedRowId(),0).getValue() + "</origID>" +
+				"<quantity>" + form2.getItemValue("o_quantity") + "</quantity>" +
+				"<limit>" + form2.getItemValue("o_limit") + "</limit>" +
+			"</ers:omsReplaceOrder>"
+		)
+	} catch(e) {
+		caught();
+	}
+};
+
+function omsCheckErrors() {
+	soapCall(
+		function(xml) {
+			try {
+				var returned = xml.getElementsByTagName("return")[0].textContent;
+				if (returned == "OK") {
+					omsCheckOrders();
+				} else {
+					var errorMessages = xml.getElementsByTagName("return")[0].getElementsByTagName("messages")[0].textContent;
+					alert(errorMessages);
+					loading(false);
+					return;
+				}
+			} catch (e) {
+				caught();
+			}
+		},
+		'omsCheckErrors',
+		'<ers:omsCheckErrors>' +
+			'<token>' + token + '</token>' +
+		'</ers:omsCheckErrors>',
+	);
+}
+
+function omsCheckOrders() {
+	soapCall(
+		function(xml) {
+			try {
+				var data = xml.getElementsByTagName("return")[0].getElementsByTagName("messages")[0].textContent;
+				var dataArray = data.split(",");
+				for (i = 0; i <= dataArray.length; i++) {
+					if (i % 14 == 0 && i != 0) {
+						if (dataArray[i-1] == "GTC") {
+							dataArray[i-3] = "Valid Till Cancel";
+						}
+						if (dataArray[i-8] == "Limit" || dataArray[i-8] == "Stop Limit") {
+						} else {
+							dataArray[i-7] = "-";
+						}
+						if (dataArray[i-8] == "Stop" || dataArray[i-8] == "Stop Limit") {
+						} else {
+							dataArray[i-6] = "-";
+						}
+						if (dataArray[i-11] == 0) {
+							dataArray[i-3] = "Expired";
+						}
+						dataArray[i-5] = round(dataArray[i-5],0);
+						ordersGrid.forEachRow(function(id){
+							if (dataArray[i-14] == ordersGrid.cells(id,0).getValue()) {
+								ordersGrid.deleteRow(id);
+								form1.unlock();
+								form2.lock();
+							}
+						});
+						ordersGrid.filterBy(0,"");
+						ordersGrid._f_rowsBuffer = null;
+						var newId = (new Date()).valueOf();
+						ordersGrid.addRow(newId,dataArray);
+						validMove();
+						ordersGrid.sortRows(0,"sort_custom","asc");
+						ordersGrid.filterByAll();
+					}
+				}
+			pause = false;
+			} catch (e) {
+				caught();
+			};
+			omsCheckExecutions()
+		},
+		'omsCheckOrders',
+		'<ers:omsCheckOrders>' +
+			'<token>' + token + '</token>' +
+		'</ers:omsCheckOrders>',
+	);
+}
+
+function omsCheckExecutions() {
+	soapCall(
+		function(xml) {
+			try {
+				var data = xml.getElementsByTagName("return")[0].getElementsByTagName("messages")[0].textContent;
+				var dataArray = data.split(",");
+				console.log(data);
+				console.log(dataArray + " " + dataArray.length)
+				for (i = 0; i <= dataArray.length; i++) {
+					if (i % 8 == 0 && i != 0) {
+						dataArray[i-5] = round(dataArray[i-5],0);
+						dataArray[i-3] = round(dataArray[i-3],0);
+						var newId = (new Date()).valueOf();
+						execGrid.addRow(newId,dataArray);
+						execGrid.sortRows(0,"sort_custom","asc");
+						console.log("execute");
+						//addExecutionData(dataArray[i-7] + '_' + dataArray[i-8], dataArray[i-2], dataArray[i-4], dataArray[i-5], dataArray[i-3], dataArray[i-6])
+					}
+				}
+			} catch (e) {
+				caught();
+			};
+			loading(false);
+			pause = false;
+		},
+		'omsCheckExecutions',
+		'<ers:omsCheckExecutions>' +
+			'<token>' + token + '</token>' +
+		'</ers:omsCheckExecutions>',
+	);
+}
+
+function addExecutionData(trNo, execTime, side, quantity, price, isin) {
+	var dateNow = new Date();
+	var dd   = dateNow.getDate();
+	if(dd < 10) { dd = '0' + dd; }
+	var mm   = dateNow.getMonth() + 1;
+	if(mm < 10) { mm = '0' + mm; }
+	var yyyy = dateNow.getFullYear();
+	var ddmmyyyy = dd + '.' + mm + '.' + yyyy;
+	var hh   = dateNow.getHours();
+	if(hh < 10) { hh = '0' + hh; }
+	var mi   = dateNow.getMinutes();
+	if(mi < 10) { mi = '0' + mi; }
+	var ss   = dateNow.getSeconds();
+	if(ss < 10) { ss = '0' + ss; }
+	var hhmiss = hh + ':' + mi + ':' + ss;
+	var dataRow = 'N|20200|' + ddmmyyyy + '|' + hhmiss + '|OMS-ER|20201|' + trNo + '|20203||20205||20206||20210|'
+	+ execTime + '|20216|' + side + '|20220||20221|' + quantity + '.00|20222||20223|' + price + '.00';
+	dataRow = addBufferData(isin, dataRow);
+	console.log(dataRow);
+	if (dataRow) {
+		addTransaction(dataRow);
+	}
+}
+
+function addBufferData(isin, dataRow) {
+	var p = 0;
+	var colID;
+	for (i = 0; i <= portGrid.getColumnsNum(); i++) {
+		if (portGrid.getColLabel(i) == "ISIN") {
+			colID = i;
+			break;
+		}
+	}
+	portGrid.forEachRow(function(id) {
+		if (portGrid.cells(id,colID).getValue() == isin) {
+			//1 Depot ID
+			p = dataRow.indexOf('|20203|') + 7;
+			dataRow = dataRow.substr(0,p) + portGrid.cells(id,15).getValue() + dataRow.substr(p);
+			//2 Serial Number
+			p = dataRow.indexOf('|20205|') + 7;
+			dataRow = dataRow.substr(0,p) + portGrid.cells(id,2).getValue() + dataRow.substr(p);
+			//3 Pos ID
+			p = dataRow.indexOf('|20206|') + 7;
+			dataRow = dataRow.substr(0,p) + portGrid.cells(id,0).getValue() + dataRow.substr(p);
+			//4 Market
+			p = dataRow.indexOf('|20220|') + 7;
+			dataRow = dataRow.substr(0,p) + portGrid.cells(id,10).getValue() + dataRow.substr(p);
+			//5 Curr
+			p = dataRow.indexOf('|20222|') + 7;
+			dataRow = dataRow.substr(0,p) + portGrid.cells(id,6).getValue() + dataRow.substr(p);
+			console.log("return inside")
+			return dataRow;
+		}
+	});
+	console.log("return outside")
+	return dataRow;
+}
+
+function addTransaction(dataRow) {
+ soapCall(
+  function(xml) {
+   var retResponse = xml.getElementsByTagName("return")[0].textContent;
+	 console.log(retResponse);
+  },
+  'importDataDuringActionMode',
+  '<ers:importDataDuringActionMode>' +
+   '<token>' + token + '</token>' +
+   '<params>' +
+		'<name>DataRow</name>' +
+		'<value>' + dataRow + '</value>' +
+   '</params>' +
+  '</ers:importDataDuringActionMode>',
+ );
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+
+function validMove() {
+	ordersGrid.forEachRow(function(id) {
+		var val = ordersGrid.cells(id,11).getValue()
+		if (val == "Expired")
+			ordersGrid.moveRow(id,"row_sibling","",expGrid);
+	});
+}
+
+function typeVal() {
+	if (form1.getItemValue("type") == "Market") {
+		form1.disableItem("limit");
+		form1.disableItem("stop");
+		form1.setItemValue("limit", "");
+		form1.setItemValue("stop", "");
+	} else if (form1.getItemValue("type") == "Limit") {
+		form1.enableItem("limit");
+		form1.disableItem("stop");
+		form1.setItemValue("stop", "");
+	} else if (form1.getItemValue("type") == "Stop") {
+		form1.enableItem("stop");
+		form1.disableItem("limit");
+		form1.setItemValue("limit", "");
+	} else if (form1.getItemValue("type") == "Stop Limit") {
+		form1.enableItem("stop");
+		form1.enableItem("limit");
+	}
+	if (form1.getItemValue("tif") == "GTD") {
+		form1.showItem("date");
+	} else {
+		form1.hideItem("date");
+	}
+}
+
+function round(value, exp) {
+  if (typeof exp === 'undefined' || +exp === 0)
+    return Math.round(value);
+  value = +value;
+  exp = +exp;
+  if (isNaN(value) || !(typeof exp === 'number' && exp % 1 === 0))
+    return "";
+  value = value.toString().split('e');
+  value = Math.round(+(value[0] + 'e' + (value[1] ? (+value[1] + exp) : exp)));
+  value = value.toString().split('e');
+  return +(value[0] + 'e' + (value[1] ? (+value[1] - exp) : -exp));
+}
+
+function today() {
+	var today = new Date();
+	var dd = today.getDate();
+	var mm = today.getMonth()+1;
+	var yyyy = today.getFullYear();
+	if(dd < 10){
+		dd='0'+dd;
+	}
+	if(mm < 10){
+		mm='0'+mm;
+	}
+	today = yyyy+'-'+mm+'-'+dd;
+	return today;
+}
+
+function dateISO() {
+	var dateISO = new Date();
+	var dd = dateISO.getDate();
+	var mm = dateISO.getMonth()+1;
+	var yyyy = dateISO.getFullYear();
+	if(dd < 10){
+		dd='0'+dd;
+	}
+	if (mm < 10){
+		mm='0'+mm;
+	}
+	if (toolbar.getValue("date") == today()) {
+		dateISO = yyyy+"-"+mm+"-"+dd + "T00:00:00.000Z";
+	} else {
+		dateISO = toolbar.getValue("date") + "T00:00:00.000Z";
+	}
+	return dateISO;
+}
+
+function caught() {
+	pause = false;
+	loading(false);
+	return;
+}
+
+function omstextSize() {
+	if (document.documentElement.clientWidth <= 1040) {
+		document.getElementById("omstext").style.width = "40%";
+		if (document.documentElement.clientWidth <= 920) {
+			document.getElementById("omstext").style.width = "30%";
+			if (document.documentElement.clientWidth <= 850) {
+				toolbar.hideItem("omstext");
+			} else {
+				toolbar.showItem("omstext");
+			}
+		}
+	} else {
+		document.getElementById("omstext").style.width = "50%";
+	}
+}
+
+var Base64 = {
+	_keyStr: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
+	encode: function(input) {
+		var output = "";
+    var chr1, chr2, chr3, enc1, enc2, enc3, enc4;
+    var i = 0;
+    input = Base64._utf8_encode(input);
+    while (i < input.length) {
+			chr1 = input.charCodeAt(i++);
+      chr2 = input.charCodeAt(i++);
+      chr3 = input.charCodeAt(i++);
+      enc1 = chr1 >> 2;
+      enc2 = ((chr1 & 3) << 4) | (chr2 >> 4);
+      enc3 = ((chr2 & 15) << 2) | (chr3 >> 6);
+      enc4 = chr3 & 63;
+      if (isNaN(chr2)) {
+      	enc3 = enc4 = 64;
+            } else if (isNaN(chr3)) {
+                enc4 = 64;
+            }
+            output = output + this._keyStr.charAt(enc1) + this._keyStr.charAt(enc2) + this._keyStr.charAt(enc3) + this._keyStr.charAt(enc4);
+        }
+        return output;
+    },
+	decode: function(input) {
+        var output = "";
+        var chr1, chr2, chr3;
+        var enc1, enc2, enc3, enc4;
+        var i = 0;
+
+        input = input.replace(/[^A-Za-z0-9\+\/\=]/g, "");
+
+        while (i < input.length) {
+
+            enc1 = this._keyStr.indexOf(input.charAt(i++));
+            enc2 = this._keyStr.indexOf(input.charAt(i++));
+            enc3 = this._keyStr.indexOf(input.charAt(i++));
+            enc4 = this._keyStr.indexOf(input.charAt(i++));
+
+            chr1 = (enc1 << 2) | (enc2 >> 4);
+            chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
+            chr3 = ((enc3 & 3) << 6) | enc4;
+
+            output = output + String.fromCharCode(chr1);
+
+            if (enc3 != 64) {
+                output = output + String.fromCharCode(chr2);
+            }
+            if (enc4 != 64) {
+                output = output + String.fromCharCode(chr3);
+            }
+
+        }
+
+        output = Base64._utf8_decode(output);
+
+        return output;
+
+    },
+
+    _utf8_encode: function(string) {
+        string = string.replace(/\r\n/g, "\n");
+        var utftext = "";
+
+        for (var n = 0; n < string.length; n++) {
+
+            var c = string.charCodeAt(n);
+
+            if (c < 128) {
+                utftext += String.fromCharCode(c);
+            }
+            else if ((c > 127) && (c < 2048)) {
+                utftext += String.fromCharCode((c >> 6) | 192);
+                utftext += String.fromCharCode((c & 63) | 128);
+            }
+            else {
+                utftext += String.fromCharCode((c >> 12) | 224);
+                utftext += String.fromCharCode(((c >> 6) & 63) | 128);
+                utftext += String.fromCharCode((c & 63) | 128);
+            }
+
+        }
+
+        return utftext;
+    },
+
+    _utf8_decode: function(utftext) {
+        var string = "";
+        var i = 0;
+        var c = c1 = c2 = 0;
+
+        while (i < utftext.length) {
+
+            c = utftext.charCodeAt(i);
+
+            if (c < 128) {
+                string += String.fromCharCode(c);
+                i++;
+            }
+            else if ((c > 191) && (c < 224)) {
+                c2 = utftext.charCodeAt(i + 1);
+                string += String.fromCharCode(((c & 31) << 6) | (c2 & 63));
+                i += 2;
+            }
+            else {
+                c2 = utftext.charCodeAt(i + 1);
+                c3 = utftext.charCodeAt(i + 2);
+                string += String.fromCharCode(((c & 15) << 12) | ((c2 & 63) << 6) | (c3 & 63));
+                i += 3;
+            }
+
+        }
+
+        return string;
+    }
+}

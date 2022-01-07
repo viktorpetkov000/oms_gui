@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html>
+  <head lang="en">
+	<meta charset="utf-8">
+  <title>TRADE MANAGER FIX 4.4 Order Match</title>
+	<script src="codebase/dhtmlx.js" type="text/javascript"></script>
+  <script src="data/WSCodes.js" type="text/javascript"></script>
+  <script src="data/jsonObjs.js" type="text/javascript"></script>
+  <link rel="STYLESHEET" type="text/css" href="codebase/dhtmlx.css">
+  <style>
+		html, body {
+      overflow: hidden;
+			width: 100%;
+			height: 100%;
+			margin: 0px;
+			padding: 0px;
+		}
+		#combo {
+			margin: -2px;
+		}
+    #loading-image {
+      position: fixed;
+      display: none;
+      margin: auto;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 340px;
+      height: 340px;
+      z-index: 1;
+    }
+    #loading-text {
+      text-align: center;
+      position:absolute;
+      color:white;
+      text-shadow: -1.5px 0 black, 0 1.5px black, 1.5px 0 black, 0 -1.5px black;
+      left: 0;
+      right: 0;
+      bottom: 43%;
+      transform: translateY(-57%);
+      font-size: 0px;
+      z-index: 2;
+    }
+    #omstext {
+      position: absolute;
+      margin: auto;
+      width: 50%;
+      font-weight: bold;
+      text-align: center;
+      white-space: nowrap;
+      font-size: 26px;
+      font-size: 1.54vw;
+    }
+    #usertext {
+      font-weight: bold;
+      font-size: 14px;
+    }
+    #search {
+      margin-top: 6.5px;
+      margin-left: 15px;
+      border:none;
+    }
+  </style>
+  <script>
+    var timeout = 1200;
+    // Webservice variables
+  	var domains, token, userName;
+    var pause = true;
+    // Webservice Listnames
+    var analyses, portfolios, scenarios, depotID, actionMode = false;
+  	// DHTMLX variables
+  	var layout, toolbar, portCombo, win, loginWin, loginForm, tab, portGrid, ordersGrid, execGrid, epxGrid, form1, form2, validCombo, cfgWin, cfgTool, cfgList;
+    var listId, treeWin, tree, treeBar, portDate, tab2, ro = "", rebookPort, prepGrid, confIdUsers;
+    var cols = "Position,ISIN,Serial Number,Active Status,Instrument Type,Name,Currency,\
+    Last Market Price Buy,Last Market Price Sell,Market Price Timestamp,Market,Volume,Issuer ID,Issuer Name,Depot ID"
+    var flags = [];
+  	// Loading screen
+    var loading = function(status) {
+      if (status == "hybrid") {
+        loginWin.setModal(true);
+        document.getElementById("loading-image").style.display="none";
+        document.getElementById("loading-text").style.fontSize="0px";
+      }
+      if (status) {
+        loginWin.setModal(true);
+        document.getElementById("loading-image").style.display="block";
+        document.getElementById("loading-text").style.fontSize="36px";
+      } else {
+        loginWin.setModal(false);
+        document.getElementById("loading-image").style.display="none";
+        document.getElementById("loading-text").style.fontSize="0px";
+      }
+    }
+    function sort_custom(a,b,order){
+        var a=a.slice(7);
+        var b=b.slice(7);
+        var n=parseInt(a);
+        var m=parseInt(b);
+        if(order=="asc")
+            return n>m?1:-1;
+        else
+            return n<m?1:-1;
+    };
+    setInterval(refresh, 4000);
+    function refresh() {
+      if (!pause) {
+        setTimeout(function(){
+          if (!pause) {
+            omsCheckOrders();
+          }
+        }, timeout+100)
+      }
+    }
+    // Main code
+    dhtmlx.image_path="codebase/imgs/";
+		dhtmlxEvent(window,"load",function() {
+			// Layout: Main
+			layout = new dhtmlXLayoutObject(document.body, "3T");
+			layout.cells("a").setText('PMS Trade Portfolio <input type="text" id="search" placeholder="Search by Position ID">');
+			layout.cells("b").setText("");
+			layout.cells("a").setHeight(300);
+      layout.cells("c").setText("");
+      layout.cells("c").setWidth(350);
+      // Layout: Resize
+      if (window.attachEvent)
+        window.attachEvent("onresize",resizeLayout);
+      else
+        window.addEventListener("resize",resizeLayout,false);
+      var t;
+      function resizeLayout(){
+        window.clearTimeout(t);
+        t = window.setTimeout(function(){
+          layout.cells("a").setHeight(300);
+    			layout.cells("c").setWidth(350);
+        },200);
+        omstextSize();
+      }
+			// Get domains
+			getAvailableDomains()
+			// Window
+			win = new dhtmlXWindows()
+			// Window: Login
+			loginWin = win.createWindow("login", 20, 30, 250, 180);
+      loginWin.button("minmax").disable();
+      loginWin.button("close").disable();
+      loginWin.button("park").disable();
+      loginWin.setText("Login");
+      loginWin.setModal(true);
+			loginWin.center();
+			// Window: Login: Form
+			loginForm = loginWin.attachForm();
+      loginForm.loadStruct(loginFormData);
+			loginForm.attachEvent("onButtonClick", function(){
+				document.getElementById("loading-text").innerHTML = "Logging in"
+        loginForm.disableItem("login");
+				loading(true);
+				login();
+			});
+      loginForm.attachEvent("onChange", function(name){
+        if (name == "domain") {
+          getUsersForDomain();
+        }
+      });
+      // Window: Config
+      /*cfgWin = win.createWindow("Config", 10, 30, 500, 380);
+      cfgWin.button("minmax").disable();
+      cfgWin.button("close").disable();
+      cfgWin.button("park").disable();
+      cfgWin.setText("Config");
+      cfgWin.center();
+      // Window: Config: Toolbar
+      cfgTool = cfgWin.attachToolbar();
+      cfgTool.addButton("new", 0, "New");
+      cfgTool.addButton("edit", 1, "Edit");
+      cfgTool.addButton("delete", 2, "Delete");
+      cfgTool.addSpacer("delete");
+      cfgTool.addButton("exit", 3, "Exit");
+      cfgTool.disableItem("edit");
+      cfgTool.disableItem("delete");
+      cfgTool.attachEvent("onClick", function(name){
+        if (name == "new") {
+          var pName = prompt("Name: ")
+          if (pName) {
+            cfgList.add({
+              id:parseInt(listId)+1,
+              name:pName,
+              settings:""
+            })
+            listId = cfgList.last();
+          }
+        }
+        if (name == "edit") {
+          treeWin.show();
+          treeWin.setModal(true);
+          var set = cfgList.get(cfgList.getSelected()).settings.split(",");
+          cfgWin.hide();
+          cfgWin.setModal(false);
+          var checked = tree.getAllChecked().split(",")
+          layout.cells("a").setText("Editing: " + cfgList.get(cfgList.getSelected()).name);
+          for (i = 0; i < checked.length; i++) {
+            tree.setCheck(checked[i],0);
+          }
+          for (i = 0; i < set.length; i++) {
+            tree.setCheck(set[i],1);
+          }
+        }
+        if (name == "delete") {
+          if (confirm("Are you sure you wish to delete " + cfgList.get(cfgList.getSelected()).name + "?")) {
+            cfgList.remove(cfgList.getSelected());
+          }
+        }
+        if (name == "exit") {
+          cfgWin.hide();
+          cfgWin.setModal(false);
+        }
+      })
+      // Window: Config: List
+      cfgList = cfgWin.attachList();
+      cfgList.define("type", {
+        template:"#name#",
+        height:30,
+      })
+      cfgList.define("select",true);
+      cfgList.parse(listData, "json");
+      listId = cfgList.last();
+      cfgList.attachEvent("onItemClick", function(){
+        cfgTool.enableItem("edit");
+        cfgTool.enableItem("delete");
+      })
+      cfgList.attachEvent("onAfterDelete", function(){
+        cfgTool.disableItem("edit");
+        cfgTool.disableItem("delete");
+      })
+      cfgList.attachEvent("onItemDblClick", function(){
+        alert("You have selected " + cfgList.get(cfgList.getSelected()).name);
+        cfgWin.hide();
+        cfgWin.setModal(false);
+      });
+      cfgWin.hide();
+      // Window: Tree
+      treeWin = win.createWindow("Tree", 10, 30, 500, 380);
+      treeWin.button("minmax").disable();
+      treeWin.button("close").disable();
+      treeWin.button("park").disable();
+      treeWin.setText("Tree");
+      treeWin.center();
+      // Window: Tree: Toolbar
+      treeBar = treeWin.attachToolbar();
+      treeBar.addButton("save", 0, "Save");
+      treeBar.addButton("back", 1, "Back");
+      treeBar.addSpacer("back");
+      treeBar.addButton("exit", 2, "Exit");
+      treeBar.attachEvent("onClick", function(name){
+        if (name == "save") {
+          cfgList.get(cfgList.getSelected()).settings = tree.getAllChecked();
+          alert("Saved");
+        }
+        if (name == "back") {
+          treeWin.hide();
+          treeWin.setModal(false);
+          cfgWin.show();
+          cfgWin.setModal(true);
+        }
+        if (name == "exit") {
+          treeWin.hide();
+          treeWin.setModal(false);
+        }
+      })
+      // Window: Tree: Tree
+      tree = treeWin.attachTree();
+      tree.enableTreeLines(true);
+      tree.enableCheckBoxes(true);
+      tree.enableThreeStateCheckboxes(true);
+      tree.parse(treeData,"xml");
+      treeWin.hide();*/
+			// Toolbar
+			toolbar = layout.attachToolbar();
+			// Toolbar: Controls
+      toolbar.addText('cb', 0, '<div id="combo">');
+      toolbar.addInput('date', 1, '', 100);
+			toolbar.addButton("load", 2, "Load");
+      toolbar.addButton("rebook", 3, "Booking");
+      toolbar.addButton("test", 4, "Test");
+      //toolbar.addButton("cfg", 5, "Config");
+      toolbar.addText('omstext', 7, '<div id="omstext">TRADE MANAGER FIX 4.4 Order Match</div>');
+      toolbar.addSpacer("omstext");
+      toolbar.addText('usertext', 8, '<div id="usertext">Not logged in</div>');
+      toolbar.addButton("logout", 9, 'Logout');
+      toolbar.disableItem("rebook");
+      toolbar.disableItem("load");
+      toolbar.hideItem("test");
+      omstextSize();
+      // Toolbar: Combobox
+      portCombo = new dhtmlXCombo("combo", "alfa", 200);
+      portCombo.allowFreeText(false);
+      portCombo.enableAutocomplete();
+      portCombo.disable();
+      // Toolbar: Calendar
+      toolbar.objPull[toolbar.idPrefix+"date"].obj.firstChild.readOnly = true;
+      toolbar.setValue("date", today(), false);
+			// Toolbar: Button: Event
+			toolbar.attachEvent("onClick", function(name){
+				if (name == "logout") {
+          pause = true;
+          document.getElementById("loading-text").innerHTML = "Logging out";
+					loading(true);
+          setTimeout(logout(), timeout);
+				}
+				if (name == "load") {
+          pause = true;
+          form1.lock();
+          loading(true);
+					setTimeout(runAnalysis(), timeout);
+				}
+        if (name == "cfg") {
+          cfgWin.show();
+          cfgWin.setModal(true);
+        }
+        if (name == "rebook") {
+          pause = true;
+          document.getElementById("loading-text").innerHTML = "Rebooking";
+          loading(true);
+          setTimeout(rebook(), timeout);
+        }
+        if (name == "test") {
+          pause = true;
+          setTimeout(importNextTable(), timeout);
+        }
+			})
+			// Tab
+			tab = layout.cells("b").attachTabbar();
+			tab.addTab("a1", "Existing Orders", "100px");
+      tab.addTab("a2", "Prepared Orders", "100px");
+			tab.addTab("a3", "Executions", "100px");
+      tab.addTab("a4", "Archive Orders", "100px");
+			tab.tabs("a1").setActive();
+      // Tab2
+      tab2 = layout.cells("c").attachTabbar();
+      tab2.addTab("b1", "Create Order", "100px");
+      tab2.addTab("b2", "Replace Order", "100px");
+      tab2.tabs("b1").setActive();
+			// Grid: Portfolio
+			portGrid = layout.cells("a").attachGrid();
+			portGrid.setHeader(cols);
+      for (i = 0; i < cols.split(",").length; i++) {
+        ro += "ro,"
+      }
+      ro = ro.substring(0, ro.length - 1);
+      portGrid.setColTypes(ro);
+      portGrid.setColumnHidden(14,true);
+      portGrid.setColumnIds("p_posid,isin");
+			portGrid.init();
+      for (var i=0; i<portGrid.getColumnsNum(); i++){
+        portGrid.setColWidth(i,"7");
+      }
+      portGrid.makeSearch("search",0);
+      // Grid: Portfolio: Events
+      portGrid.attachEvent("onRowSelect", function(){
+        ordersGrid.clearSelection();
+        execGrid.clearSelection();
+        prepGrid.clearSelection();
+        expGrid.clearSelection();
+        form1.clear();
+        form1.disableItem("update");
+        form1.unlock();
+        form2.lock();
+        form1.setItemValue("isin", portGrid.cells(portGrid.getSelectedRowId(),1).getValue());
+        form1.disableItem("delete")
+        if (hasFlag("canCreateOrders")) {
+          if (form1.getItemValue("isin")) {
+            form1.enableItem("prepare");
+          } else {
+            form1.disableItem("prepare");
+          }
+        }
+        if (hasFlag("canConfirmOrders")) {
+          if (form1.getItemValue("isin")) {
+            form1.enableItem("submit");
+          } else {
+            form1.disableItem("submit");
+          }
+        }
+      });
+			// Grid: Orders
+			ordersGrid = tab.cells("a1").attachGrid();
+			ordersGrid.setHeader("Order ID,ISIN,Quantity,Open,Executed,Side,Type,Limit,Stop,Average,TradeTime,ValidTill,fill,TIF");
+      ordersGrid.attachHeader("#text_filter,#text_filter,#numeric_filter,#numeric_filter,#numeric_filter,#select_filter,#select_filter,#numeric_filter,#numeric_filter,#numeric_filter,#text_filter,<div id='valid'></div>");
+      ordersGrid.setColumnIds("o_orderid,o_isin,o_quantity,o_open,o_exec,o_side,o_type,o_limit,o_stop,o_avg,o_tradetime,o_validtill");
+      ordersGrid.setColTypes("ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro");
+      ordersGrid.setColSorting(",str,int,int,int,str,str,int,int,int,date,date,str,str");
+      ordersGrid.setCustomSorting(sort_custom,0);
+			ordersGrid.init();
+      ordersGrid.setColumnHidden(12,true);
+      ordersGrid.setColumnHidden(13,true);
+      for (var i=0; i<ordersGrid.getColumnsNum()-2; i++){
+        ordersGrid.setColWidth(i,"8");
+      }
+      // Grid: Orders: Events
+      ordersGrid.attachEvent("onRowSelect", function(){
+        portGrid.clearSelection();
+        form1.lock();
+        if (hasFlag("canConfirmOrders")) {
+          form2.unlock();
+        }
+      });
+      // Grid: Prepared Orders
+      prepGrid = tab.cells("a2").attachGrid();
+      prepGrid.setHeader("Order ID,ISIN,Quantity,Side,Type,Limit,Stop,TIF,ValidTill,Owner");
+      prepGrid.setColumnIds("orderid,isin,quantity,side,type,limit,stop,tif,date,owner");
+      prepGrid.setColTypes("ro,ro,ro,ro,ro,ro,ro,ro,ro,ro");
+      prepGrid.setCustomSorting(sort_custom,0);
+      prepGrid.init();
+      // Grid: Prepared Orders: Events
+      prepGrid.attachEvent("onRowSelect", function(){
+        portGrid.clearSelection();
+        form1.unlock();
+        if (hasFlag("canCreateOrders")) {
+          form1.enableItem("update");
+          form1.enableItem("prepare");
+        }
+        if (hasFlag("canDeleteOrders")) {
+          form1.enableItem("delete");
+        }
+        if (form1.getItemValue("stop") == "-") {
+          form1.setItemValue("stop","");
+        }
+        if (form1.getItemValue("limit") == "-") {
+          form1.setItemValue("limit","");
+        }
+        form1.disableItem("prepare")
+      });
+			// Grid: Executed
+			execGrid = tab.cells("a3").attachGrid();
+			execGrid.setHeader("Execution ID,Order ID,ISIN,Quantity,Side,Price,Execution Time");
+			execGrid.setColSorting("int,,str,int,str,int,date");
+      execGrid.setColTypes("ro,ro,ro,ro,ro,ro,ro");
+      execGrid.setCustomSorting(sort_custom,1);
+			execGrid.init();
+      // Grid: Executed: Events
+      execGrid.attachEvent("onRowSelect", function(){
+        portGrid.clearSelection();
+        form1.lock()
+      });
+      // Grid: Archive
+      expGrid = tab.cells("a4").attachGrid();
+      expGrid.setHeader("Order ID,ISIN,Quantity,Executed,Not Executed,Side,Type,Limit,Stop,Average,TradeTime,fill,TIF,ValidTill,Order Fulfilment");
+      expGrid.attachHeader("#text_filter,#text_filter,#numeric_filter,#numeric_filter,#numeric_filter,#select_filter,#select_filter,#numeric_filter,#numeric_filter,#numeric_filter,#text_filter,,#select_filter,,#select_filter");
+      expGrid.setColTypes("ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro,ro");
+      expGrid.setColSorting(",str,int,int,int,str,str,int,int,int,date,date,str,str,str,str");
+      expGrid.setCustomSorting(sort_custom,0);
+      expGrid.init();
+      expGrid.setColumnHidden(11,true);
+      for (var i=0; i<expGrid.getColumnsNum(); i++){
+        expGrid.setColWidth(i,"6");
+      }
+      expGrid.setColWidth(4,"7");
+      expGrid.setColWidth(10,"10");
+      expGrid.setColWidth(12,"10");
+      expGrid.setColWidth(13,"10");
+      expGrid.setColWidth(14,"9");
+      // Grid: Archive: Events
+      expGrid.attachEvent("onRowSelect", function(){
+        portGrid.clearSelection();
+        form1.lock()
+      });
+      // Tab: Events
+      tab.attachEvent("onTabClick", function(id){
+      if (!portGrid.getSelectedRowId()){
+        form1.lock();
+      }
+      form2.lock();
+      form1.disableItem("update");
+      ordersGrid.clearSelection();
+      prepGrid.clearSelection();
+      execGrid.clearSelection();
+      expGrid.clearSelection();
+      });
+			// Form 1
+			form1 = tab2.cells("b1").attachForm();
+			form1.loadStruct(form1Data);
+      form1.lock();
+      form1.bind(prepGrid);
+      form1.getCalendar("date").setDateFormat("%Y/%m/%d %H:%i:%s");
+      form1.getCalendar("date").showTime();
+      form1.getCalendar("date").showToday();
+      form1.getCombo("type").attachEvent("onChange", typeVal);
+			form1.getCombo("tif").attachEvent("onChange", typeVal);
+      form1.attachEvent("onButtonClick", function(name) {
+        if (form1.getItemValue("quantity") == "" || form1.getItemValue("quantity") <= 0) {
+          alert("Quantity cannot be 0 or less");
+          return;
+        }
+        if (form1.getItemValue("isin") == "") {
+          alert("ISIN cannot be blank");
+          return;
+        }
+        pause = true;
+        loading(true);
+        if (name == "submit") {
+          document.getElementById("loading-text").innerHTML = "Creating New Order"
+          setTimeout(omsNewOrder(), timeout);
+        }
+        if (name == "prepare") {
+          document.getElementById("loading-text").innerHTML = "Preparing order";
+          setTimeout(omsPreparedOrder(), timeout);
+        }
+        if (name == "update") {
+          document.getElementById("loading-text").innerHTML = "Updating order";
+          setTimeout(omsUpdateOrder(), timeout);
+        }
+      });
+      if (!hasFlag("canCreateOrders")) {
+        form1.disableItem("update");
+        form1.disableItem("prepare");
+      }
+      if (!hasFlag("canDeleteOrders")) {
+        form1.disableItem("delete");
+      }
+			// Form 2
+			form2 = tab2.cells("b2").attachForm();
+      form2.loadStruct(form2Data);
+      form2.lock();
+      form2.bind(ordersGrid);
+      // Form 2: Event
+      form2.attachEvent("onButtonClick", function(name){
+        if (name == "cancel") {
+          pause = true;
+          loading(true);
+          document.getElementById("loading-text").innerHTML = "Cancelling order";
+          setTimeout(omsCancelOrder(), timeout);
+        }
+        if (name == "replace") {
+          pause = true;
+          loading(true);
+          document.getElementById("loading-text").innerHTML = "Replacing order";
+          setTimeout(omsReplaceOrder(), timeout);
+        }
+      })
+		})
+	</script>
+  <body>
+    <h1 id="loading-text">Loading</h1>
+    <img id="loading-image" src="img/loading.gif" alt="Loading..." />
+  </body>
+</html>
